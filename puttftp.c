@@ -7,11 +7,11 @@
 
 #define MAX_BUFFER_SIZE 516 // 2 bytes opcode + 2 bytes block number + 512 bytes data
 
-// Structure pour les paquets TFTP
+// structure for TFTP packets
 struct TFTP_Packet {
     short opcode;
     union {
-        char request[2 + MAX_BUFFER_SIZE]; // opcode(2) + filename + mode
+        char request[2 + MAX_BUFFER_SIZE]; // opcode(size = 2) + filename + mode
         struct {
             short block_num;
             char data[MAX_BUFFER_SIZE];
@@ -34,41 +34,41 @@ int main(int argc, char *argv[]) {
     const char *port = argv[2];
     const char *filename = argv[3];
 
-    // Utilisation de getaddrinfo pour obtenir les informations sur le serveur
+    // use of getaddrinfo to obtain server information
     struct addrinfo hints, *res;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
 
     if (getaddrinfo(server_ip, port, &hints, &res) != 0)
-        error("Erreur lors de la récupération des informations sur le serveur");
+        error("Error getting server information");
 
-    // Création du socket
+    // creating a socket
     int sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (sockfd < 0)
-        error("Erreur lors de la création du socket");
+        error("Error creating socket");
 
-    printf("Socket créé avec succès.\n");
+    printf("Socket created successfully.\n");
 
-    // Construction du paquet WRQ (Write Request)
+    // construct WRQ packet (Write Request)
     struct TFTP_Packet wrq_packet;
     wrq_packet.opcode = htons(2); // WRQ opcode
     int length = sprintf(wrq_packet.content.request, "%s%c%s%c", filename, 0, "octet", 0);
 
-    if (sendto(sockfd, &wrq_packet, length +2, 0, res->ai_addr, res->ai_addrlen) == -1)
-        error("Erreur lors de l'envoi du WRQ");
+    if (sendto(sockfd, &wrq_packet, length + 2, 0, res->ai_addr, res->ai_addrlen) == -1)
+        error("Error sending WRQ");
 
-    printf("WRQ envoyé avec succès.\n");
+    printf("WRQ sent successfully.\n");
 
-    // Ouverture du fichier à envoyer
+    // open the file to be sent
     FILE *file = fopen(filename, "rb");
     if (!file)
-        error("Erreur lors de l'ouverture du fichier en lecture");
+        error("Error opening file for reading");
 
     struct sockaddr_storage server_response_addr;
     socklen_t response_addr_len = sizeof(server_response_addr);
 
-    // Initialise avec les informations obtenues de getaddrinfo
+    // initializing with information obtained from getaddrinfo
     memcpy(&server_response_addr, res->ai_addr, res->ai_addrlen);
 
     short block_num = 0;
@@ -76,51 +76,48 @@ int main(int argc, char *argv[]) {
         struct TFTP_Packet data_packet;
         data_packet.opcode = htons(3); // DATA opcode
         data_packet.content.data.block_num = htons(block_num);
-        // Lecture des données du fichier
+        // reading data from the file
         size_t bytes_read;
-        if(block_num==0){
-        	bytes_read = 1;
+        if (block_num == 0) {
+            bytes_read = 1;
+        } else {
+            bytes_read = fread(data_packet.content.data.data, 1, MAX_BUFFER_SIZE - 4, file);
         }
-        else{
-        	bytes_read = fread(data_packet.content.data.data, 1, MAX_BUFFER_SIZE - 4, file);
-	}
         if (bytes_read == 0) {
-            printf("Fin du fichier détectée.\n");
-            break;  // Fin du fichier
+            printf("End of file detected.\n");
+            break; // end of file
         }
 
-        // Envoi du paquet DATA
+        // send DATA packet
         if (sendto(sockfd, &data_packet, sizeof(short) + bytes_read + 2, 0, (struct sockaddr *)&server_response_addr, response_addr_len) == -1)
-            error("Erreur lors de l'envoi du paquet DATA");
+            error("Error sending DATA packet");
 
-        printf("Envoi du paquet DATA (block %d) avec succès.\n", block_num);
+        printf("DATA packet sent successfully (block %d).\n", block_num);
 
-        // Attente de l'ACK
+        // wait for ACK
         struct TFTP_Packet ack_packet;
-        ssize_t ack_size = recvfrom(sockfd, &ack_packet, sizeof(ack_packet) +2, 0, (struct sockaddr *)&server_response_addr, &response_addr_len);
-        
-        printf("%d\n",ntohs(ack_packet.content.data.block_num));
+        ssize_t ack_size = recvfrom(sockfd, &ack_packet, sizeof(ack_packet) + 2, 0, (struct sockaddr *)&server_response_addr, &response_addr_len);
 
-        printf("Opcode de l'ACK: %d\n", ntohs(ack_packet.opcode));
+        printf("%d\n", ntohs(ack_packet.content.data.block_num));
+
+        printf("ACK opcode: %d\n", ntohs(ack_packet.opcode));
         if (ack_size == -1)
-            error("Erreur lors de la réception de l'ACK");
+            error("Error receiving ACK");
 
         if (ntohs(ack_packet.opcode) != 4 || ntohs(ack_packet.content.data.block_num) != block_num)
-            error("ACK incorrect");
+            error("Incorrect ACK");
 
-        printf("ACK reçu avec succès (Block %d).\n", block_num);
+        printf("ACK received successfully (Block %d).\n", block_num);
 
-        // Incrémentation du numéro de bloc
+        // incrementing the block number each loop
         block_num++;
-
     }
 
     fclose(file);
     close(sockfd);
     freeaddrinfo(res);
 
-    printf("Envoi du fichier terminé avec succès.\n");
+    printf("File transfer completed successfully.\n");
 
     return 0;
 }
-
