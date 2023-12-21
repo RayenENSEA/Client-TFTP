@@ -76,10 +76,14 @@ int main(int argc, char *argv[]) {
         struct TFTP_Packet data_packet;
         data_packet.opcode = htons(3); // DATA opcode
         data_packet.content.data.block_num = htons(block_num);
-
         // Lecture des données du fichier
-        size_t bytes_read = fread(data_packet.content.data.data, 1, MAX_BUFFER_SIZE - 4, file);
-
+        size_t bytes_read;
+        if(block_num==0){
+        	bytes_read = 1;
+        }
+        else{
+        	bytes_read = fread(data_packet.content.data.data, 1, MAX_BUFFER_SIZE - 4, file);
+	}
         if (bytes_read == 0) {
             printf("Fin du fichier détectée.\n");
             break;  // Fin du fichier
@@ -93,8 +97,9 @@ int main(int argc, char *argv[]) {
 
         // Attente de l'ACK
         struct TFTP_Packet ack_packet;
-        ssize_t ack_size = recvfrom(sockfd, &ack_packet, sizeof(ack_packet), 0, (struct sockaddr *)&server_response_addr, &response_addr_len);
-        //ack_packet.content.data.block_num = htons(ack_packet.content.data.block_num) - htons(1);
+        ssize_t ack_size = recvfrom(sockfd, &ack_packet, sizeof(ack_packet) +2, 0, (struct sockaddr *)&server_response_addr, &response_addr_len);
+        
+        printf("%d\n",ntohs(ack_packet.content.data.block_num));
 
         printf("Opcode de l'ACK: %d\n", ntohs(ack_packet.opcode));
         if (ack_size == -1)
