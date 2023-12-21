@@ -1,140 +1,130 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <netdb.h>
 #include <unistd.h>
-#include <stdint.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 
-#define MAX_BUFFER_SIZE 516
+#define MAX_BUFFER_SIZE 516 // 2 bytes opcode + 2 bytes block number + 512 bytes data
 
-void receiveFile(int sockfd, const char *file_name) {
-    printf("Receiving file...\n");
+// Structure pour les paquets TFTP
+struct TFTP_Packet {
+    short opcode;
+    union {
+        char request[2 + MAX_BUFFER_SIZE]; // opcode(2) + filename + mode
+        struct {
+            short block_num;
+            char data[MAX_BUFFER_SIZE];
+        } data;
+    } content;
+};
 
-    FILE *file = fopen(file_name, "wb");
-    if (file == NULL) {
-        perror("Error opening file for writing");
-        exit(EXIT_FAILURE);
-    }
-
-    uint16_t expectedBlock = 1;  // The expected block number to receive
-
-    while (1) {
-        char buffer[MAX_BUFFER_SIZE];
-        ssize_t bytesRead = recv(sockfd, buffer, sizeof(buffer), 0);
-	printf("%ld",bytesRead);
-
-        if (bytesRead == -1) {
-            perror("Error receiving data");
-            fclose(file);
-            exit(EXIT_FAILURE);
-        } else if (bytesRead == 0) {
-            // End of file
-            printf("End of file.\n");
-            break;
-        } else if (bytesRead < 4) {
-            fprintf(stderr, "Received unexpected packet with size %zd\n", bytesRead);
-            fclose(file);
-            exit(EXIT_FAILURE);
-        }
-
-        uint16_t opcode = (buffer[0] << 8) | buffer[1];
-        uint16_t receivedBlock = (buffer[2] << 8) | buffer[3];
-
-        printf("Received packet: opcode=%d, block=%d, data size=%zd\n", opcode, receivedBlock, bytesRead - 4);
-
-        if (opcode == 3) {
-            // Rest of the code remains the same...
-        } else if (opcode == 5) {
-            // Rest of the code remains the same...
-        } else {
-            fprintf(stderr, "Received unexpected opcode: %d\n", opcode);
-            fclose(file);
-            exit(EXIT_FAILURE);
-        }
-    }
-
-    fclose(file);
-
-    printf("File reception completed.\n");
-}
-
-
-
-void sendReadRequest(int sockfd, const char *file_name) {
-    printf("Sending read request...\n");
-
-    // Build the read request (RRQ) packet
-    char requestPacket[MAX_BUFFER_SIZE];
-    memset(requestPacket, 0, MAX_BUFFER_SIZE);
-    requestPacket[0] = 0; // Opcode for RRQ (read request)
-
-    // Add file name and mode to the request packet
-    strncpy(requestPacket + 2, file_name, strlen(file_name));
-    strcpy(requestPacket + 2 + strlen(file_name), "octet"); // Mode "octet"
-
-    // Add TFTP Option Extension (RFC2347)
-    uint16_t *optionCode = (uint16_t *)(requestPacket + 2 + strlen(file_name) + 1);
-    *optionCode = htons(0x0001); // Option code for "tsize" option
-    uint16_t *optionSize = (uint16_t *)(requestPacket + 2 + strlen(file_name) + 1 + 2);
-    *optionSize = htons(0); // Set size to 0 for initial request
-
-    // Send the read request to the server
-    if (send(sockfd, requestPacket, 2 + strlen(file_name) + 1 + 2 + 1, 0) == -1) {
-        perror("Error sending read request");
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Read request sent.\n");
+void error(const char *msg) {
+    perror(msg);
+    exit(EXIT_FAILURE);
 }
 
 int main(int argc, char *argv[]) {
     if (argc != 4) {
-        fprintf(stderr, "Usage: %s <server_address> <port> <file_name>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <server_ip> <port> <filename>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
-    const char *server_address = argv[1];
+    const char *server_ip = argv[1];
     const char *port = argv[2];
-    const char *file_name = argv[3];
+    const char *filename = argv[3];
 
-    struct addrinfo hints, *result, *rp;
-    memset(&hints, 0, sizeof(struct addrinfo));
-    hints.ai_family = AF_UNSPEC;    /* Permet IPv4 ou IPv6 */
-    hints.ai_socktype = SOCK_DGRAM; /* Datagram socket (UDP) */
-    hints.ai_flags = 0;
-    hints.ai_protocol = 0;          /* Any protocol */
+    // Utilisation de getaddrinfo pour obtenir les informations sur le serveur
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
 
-    int status = getaddrinfo(server_address, port, &hints, &result);
-    if (status != 0) {
-        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(status));
-        exit(EXIT_FAILURE);
+    if (getaddrinfo(server_ip, port, &hints, &res) != 0)
+        error("Erreur lors de la récupération des informations sur le serveur");
+
+    // Création du socket
+    int sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sockfd < 0)
+        error("Erreur lors de la création du socket");
+
+    printf("Socket créé avec succès.\n");
+
+    // Construction du paquet RRQ (Read Request)
+    struct TFTP_Packet rrq_packet;
+    rrq_packet.opcode = htons(1); // RRQ opcode
+    sprintf(rrq_packet.content.request, "%s%c%s%c", filename, 0, "octet", 0);
+
+    if (sendto(sockfd, &rrq_packet, sizeof(rrq_packet.content.request), 0, res->ai_addr, res->ai_addrlen) == -1)
+    	error("Erreur lors de l'envoi du RRQ");
+
+    printf("RRQ envoyé avec succès.\n");
+
+    // Réception du fichier
+    FILE *file = fopen(filename, "wb");
+    if (!file)
+        error("Erreur lors de l'ouverture du fichier en écriture");
+
+    struct sockaddr_storage server_response_addr;
+    socklen_t response_addr_len = sizeof(server_response_addr);
+
+    // Initialise avec les informations obtenues de getaddrinfo
+    memcpy(&server_response_addr, res->ai_addr, res->ai_addrlen);
+
+    while (1) {
+        struct TFTP_Packet data_packet;
+        printf("Attente de réception...\n");
+        ssize_t bytes_received = recvfrom(sockfd, &data_packet, sizeof(data_packet), 0, (struct sockaddr *)&server_response_addr, &response_addr_len);
+
+        if (bytes_received == -1) {
+            error("Erreur lors de la réception du fichier");
+        } else if (bytes_received == 0) {
+            printf("Fin du fichier détectée.\n");
+            break;  // Fin du fichier
+        } else {
+            printf("Réception de %zd octets.\n", bytes_received);
+
+            // Affichage du contenu du paquet
+            printf("Opcode: %d\n", ntohs(data_packet.opcode));
+
+            if (ntohs(data_packet.opcode) == 5) {
+                // Affichage du code d'erreur et du message d'erreur
+                short error_code;
+                memcpy(&error_code, data_packet.content.data.data, sizeof(short));
+                printf("Code d'erreur: %d\n", ntohs(error_code));
+                printf("Message d'erreur: %s\n", data_packet.content.data.data + sizeof(short));
+            } else if (ntohs(data_packet.opcode) == 3) {
+                printf("Block number: %d\n", ntohs(data_packet.content.data.block_num));
+                // Écriture dans le fichier
+                size_t data_size = bytes_received - 4; // Taille effective des données
+                size_t written = fwrite(data_packet.content.data.data, 1, data_size, file);
+
+                if (written != data_size) {
+                    printf("Erreur lors de l'écriture dans le fichier.\n");
+                    perror("fwrite");
+                }
+
+                // Envoi de l'ACK
+                struct TFTP_Packet ack_packet;
+                ack_packet.opcode = htons(4); // ACK opcode
+                ack_packet.content.data.block_num = data_packet.content.data.block_num;
+
+                if (sendto(sockfd, &ack_packet, sizeof(ack_packet.content.data), 0, (struct sockaddr *)&server_response_addr, response_addr_len) == -1)
+                    error("Erreur lors de l'envoi de l'ACK");
+                // Si la taille des données est inférieure à la taille maximale attendue, cela peut indiquer la fin du fichier
+                if (data_size < MAX_BUFFER_SIZE - 4) {
+                    printf("Fin du fichier détectée.\n");
+                    break;  // Fin du fichier
+                }
+            }
+        }
     }
 
-    int sockfd = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-    if (sockfd == -1) {
-        perror("Error creating socket");
-        exit(EXIT_FAILURE);
-    }
-
-    // Connect to the server
-    if (connect(sockfd, result->ai_addr, result->ai_addrlen) == -1) {
-        perror("Error connecting to server");
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Connection to the server successful.\n");
-
-    // Envoyer la demande de lecture (read request)
-    sendReadRequest(sockfd, file_name);
-
-    // Recevoir le fichier
-    receiveFile(sockfd, file_name);
-
-    // Fermer la socket
+    fclose(file);
     close(sockfd);
+    freeaddrinfo(res);
 
-    freeaddrinfo(result); /* Libérer la mémoire allouée par getaddrinfo */
+    printf("Téléchargement du fichier terminé avec succès.\n");
 
     return 0;
 }
