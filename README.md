@@ -52,15 +52,15 @@ Lotfi HENNI
       Puis nous l'envoyons à notre serveur TFTP à l'aide de la fonction sendto().
 
 ### Question 5-b :
-     Nous ouvrons le fichier a envoyé à l'aide de la fonction fopen() avec cette fois-ci le mode "rb" qui signifie "r: lecture", "b: binaire".
+     Nous ouvrons le fichier a envoyer à l'aide de la fonction fopen() avec cette fois-ci le mode "rb" qui signifie "r: lecture", "b: binaire".
      Nous initialisons le block_num à 0.
      Nous créons le paquet DAT avec l'opcode qui est initialisé à htons(2).
-     Puis avec la fonction fread() lirons exactement 512 octets du fichier à envoyé.
+     Puis nous lirons avec la fonction fread() exactement 512 octets du fichier à envoyer.
      Nous formaterons la suite " content " de notre paquet DAT avec le block_num et la data de 512 octets lu avec la fonction fread().
      Nous attendons par la suite le packet ACK reçu par le serveur TFTP, nous ferons un test dessus pour vérifier que le opcode de ce packet est bien à 4.
 
 ### Question 5-c :
      Nous referons exactement ce qu'on a fait à la question 5-b, mais cela dans une boucle while(1) pour envoyer un fichier constitué de plusieurs paquets.
-     Un test est fait à chaque début de la boucle qui vérifie si le nombre de bits lu n'est pas égale à 0.
-     Si le nombre de bits lu est égale à 0 cela signifiera qu'il ne reste plus rien n'a envoyé et donc nous quitterons notre boucle.
+     Un test est fait à chaque début de la boucle qui vérifie si le nombre de bits lu n'est pas égal à 0.
+     Si le nombre de bits lu est égal à 0 cela signifiera qu'il ne reste plus rien a envoyer et donc nous quitterons notre boucle.
 
